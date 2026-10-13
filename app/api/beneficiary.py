@@ -1,38 +1,80 @@
-# app/api/beneficiary.py
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, HTTPException, Depends, status
 from pydantic import BaseModel
-from app.services.wallet import CustodialWalletEngine
+from typing import Optional, Dict, Any
+from app.services.wallet import CustodialWalletEngine, SweepResult, TaxDocument
 
-router = APIRouter(prefix="/api/v1/beneficiary", tags=["Beneficiary"])
+router = APIRouter(tags=["Beneficiary"])
+wallet_engine = CustodialWalletEngine()
+
+
+class BeneficiaryWalletRequest(BaseModel):
+    beneficiary_id: int
+    account_index: int = 0
+
 
 class SweepRequest(BaseModel):
-    vault_id: str
-    cex_destination_address: str  # CEX SOL/SPL deposit address
+    beneficiary_id: int
+    encrypted_private_key: str
+    destination_address: str
 
-@router.post("/sweep-tokens")
-def sweep_inherited_assets(payload: SweepRequest):
+
+@router.post("/wallet/generate", status_code=status.HTTP_201_CREATED)
+async def generate_beneficiary_wallet(payload: BeneficiaryWalletRequest):
     """
-    Allows Web2 beneficiaries to sweep custodial tokens to an external CEX[cite: 2].
-    Requires smart contract state == Deceased[cite: 2].
+    Generates a custodial HD wallet keypair for a beneficiary.
     """
-    # 1. Fetch vault and check smart contract state[cite: 2]
-    vault = get_vault_from_db(payload.vault_id)
-    if vault.state != "Deceased":
+    try:
+        wallet = wallet_engine.generate_custodial_wallet(
+            account_index=payload.account_index
+        )
+        return {
+            "status": "success",
+            "beneficiary_id": payload.beneficiary_id,
+            "public_key": wallet.public_key,
+            "encrypted_private_key": wallet.encrypted_private_key,
+        }
+    except Exception as e:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Vault is not in Deceased state. Claim cannot be executed yet[cite: 2]."
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate custodial wallet: {str(e)}"
         )
 
-    # 2. Decrypt beneficiary custodial key[cite: 2]
-    beneficiary_keypair = CustodialWalletEngine.get_keypair_from_encrypted(
-        vault.beneficiary_encrypted_private_key
-    )
 
-    # 3. Construct and sign transfer transaction to CEX deposit address
-    # 4. Broadcast transaction to Solana network
-    
-    return {
-        "status": "success",
-        "message": f"Assets successfully swept to {payload.cex_destination_address}",
-        "tx_hash": "mock_solana_sweep_tx_hash"
-    }
+@router.post("/sweep-assets")
+async def sweep_inherited_assets(request: SweepRequest):
+    """
+    Sweeps SOL and SPL tokens from a custodial inheritance wallet to a beneficiary destination.
+    """
+    try:
+        result = wallet_engine.sweep_assets(
+            beneficiary_id=request.beneficiary_id,
+            encrypted_private_key=request.encrypted_private_key,
+            destination_address=request.destination_address
+        )
+        return result
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Asset sweep failed: {str(e)}"
+        )
+
+
+@router.get("/{beneficiary_id}/tax-document", response_model=TaxDocument)
+async def get_beneficiary_tax_document(
+    beneficiary_id: int,
+    wallet_address: str
+):
+    """
+    Generates cost-basis tax document for inherited crypto assets.
+    """
+    transfers = [
+        {"asset_symbol": "SOL", "amount": 1.0, "signature": "N/A"}
+    ]
+    rates = {"SOL": 150.0, "USDC": 1.0}
+
+    return wallet_engine.generate_tax_document(
+        beneficiary_id=beneficiary_id,
+        wallet_address=wallet_address,
+        transfers=transfers,
+        usd_market_rates=rates
+    )

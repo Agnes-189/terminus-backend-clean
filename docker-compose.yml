@@ -1,12 +1,14 @@
-version: "3.8"
-
 services:
   api:
     build:
       context: .
       dockerfile: Dockerfile
+      network: host
+    image: terminus-backend:latest
     container_name: terminus_backend_api
     restart: unless-stopped
+    env_file:
+      - .env
     ports:
       - "8000:8000"
     environment:
@@ -22,16 +24,41 @@ services:
       redis:
         condition: service_healthy
 
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      network: host
+    image: terminus-backend:latest
+    container_name: terminus_backend_worker
+    command: /opt/venv/bin/celery -A app.core.celery_app.celery_app worker --loglevel=info
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql://terminus_user:terminus_pass@db:5432/terminus_db
+      - REDIS_URL=redis://redis:6379/0
+      - ENVIRONMENT=development
+    volumes:
+      - .:/app
+    depends_on:
+      api:
+        condition: service_started
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
   db:
     image: postgres:16-alpine
     container_name: terminus_backend_db
     restart: unless-stopped
+    ports:
+      - "5433:5432"
     environment:
       POSTGRES_DB: terminus_db
       POSTGRES_USER: terminus_user
       POSTGRES_PASSWORD: terminus_pass
-    ports:
-      - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
