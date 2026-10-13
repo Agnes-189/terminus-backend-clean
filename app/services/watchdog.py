@@ -1,60 +1,76 @@
 import asyncio
-from datetime import datetime, timezone
-from app.core.database import SessionLocal, OwnerStatus
-from app.services.notifications import send_email, send_sms
+import logging
+from datetime import datetime, timedelta, timezone
+from app.core.database import SessionLocal
+from app.models.vault import Vault, VaultState
+from app.models.oracle_job import OracleJob
+from app.services.vault_state_machine import VaultStateMachineService
+from app.services.notifications import NotificationService
+
+logger = logging.getLogger("WatchdogService")
+
 
 async def check_heartbeats():
-    print("🐕 [WATCHDOG] Heartbeat monitor started...")
-    
+    """
+    Periodic Background Watchdog Loop:
+    1. Checks user inactivity for 30-day reminders.
+    2. Checks 44-day inactivity to send beneficiary warnings.
+    3. Auto-enforces 30-day Vault challenge window expiration.
+    """
     while True:
-        db = SessionLocal()
         try:
+            db = SessionLocal()
             now = datetime.now(timezone.utc)
-            vaults = db.query(OwnerStatus).all()
 
-            for vault in vaults:
-                # Calculate how many days since they last clicked the link
-                days_offline = (now - vault.last_seen.replace(tzinfo=timezone.utc)).days
+            # --- TASK A: 30-Day Check-In Reminders ---
+            thirty_days_ago = now - timedelta(days=30)
+            vaults_30d = db.query(Vault).filter(
+                Vault.state == VaultState.ACTIVE,
+                Vault.updated_at <= thirty_days_ago,
+                Vault.updated_at > now - timedelta(days=44)
+            ).all()
 
-                # ---------------------------------------------------------
-                # 30-DAY WARNING: Alert the Owner
-                # ---------------------------------------------------------
-                if days_offline >= 30 and vault.check_in_count == 0:
-                    subject = "Action Required: Terminus Vault Check-in"
-                    body = f"Hello {vault.owner_name}, it has been 30 days since your last check-in. Please log in to your Terminus dashboard to confirm you are okay."
-                    
-                    # Fetch owner email from the User table relationship
-                    owner_email = vault.user.email 
-                    
-                    send_email(owner_email, subject, body)
-                    if vault.owner_phone:
-                        send_sms(vault.owner_phone, body)
-                    
-                    # Update state so we don't spam them tomorrow
-                    vault.check_in_count = 1
-                    db.commit()
+            for vault in vaults_30d:
+                logger.info(f"🔔 [WATCHDOG] 30-day check-in alert triggered for: {vault.owner_pubkey}")
+                NotificationService.dispatch(
+                    db=db,
+                    user_pubkey=vault.owner_pubkey,
+                    template_name="checkin_reminder_30d",
+                    variables={"username": vault.owner_pubkey[:8]}
+                )
 
-                # ---------------------------------------------------------
-                # 44-DAY ALERT: Notify the Beneficiary
-                # ---------------------------------------------------------
-                elif days_offline >= 44 and vault.check_in_count == 1:
-                    subject = "Terminus Vault: Beneficiary Claim Authorized"
-                    body = f"Alert: {vault.owner_name} has missed their 44-day proof of life check-in. You are now authorized to initiate a claim at terminus.app/claim."
-                    
-                    if vault.beneficiary_email:
-                        send_email(vault.beneficiary_email, subject, body)
-                    if vault.beneficiary_phone:
-                        send_sms(vault.beneficiary_phone, body)
-                    
-                    # Update state so we wait for the claim process
-                    vault.check_in_count = 2
-                    db.commit()
+            # --- TASK B: 44-Day Beneficiary Inactivity Alert ---
+            forty_four_days_ago = now - timedelta(days=44)
+            vaults_44d = db.query(Vault).filter(
+                Vault.state == VaultState.ACTIVE,
+                Vault.updated_at <= forty_four_days_ago
+            ).all()
 
-        except Exception as e:
-            print(f"❌ [WATCHDOG ERROR] {e}")
-        finally:
+            for vault in vaults_44d:
+                logger.info(f"⚠️ [WATCHDOG] 44-day inactivity alert triggered for: {vault.owner_pubkey}")
+                NotificationService.dispatch(
+                    db=db,
+                    user_pubkey=vault.owner_pubkey,
+                    template_name="beneficiary_alert_44d",
+                    variables={"username": vault.owner_pubkey[:8]}
+                )
+
+            # --- TASK C: Expired Challenge Windows (from Step 5) ---
+            expired_vaults = db.query(Vault).filter(
+                Vault.state == VaultState.IN_CHALLENGE,
+                Vault.challenge_end_time <= now
+            ).all()
+
+            for vault in expired_vaults:
+                logger.info(f"⌛ [WATCHDOG] Processing expired challenge for: {vault.owner_pubkey}")
+                try:
+                    VaultStateMachineService.process_expired_challenge(db, vault.owner_pubkey)
+                except Exception as e:
+                    logger.error(f"Error resolving challenge for {vault.owner_pubkey}: {str(e)}")
+
             db.close()
+        except Exception as err:
+            logger.error(f"Watchdog main execution error: {str(err)}")
 
-        # In production, check once a day: await asyncio.sleep(86400)
-        # For testing, check every 10 seconds:
-        await asyncio.sleep(10)
+        # Runs poll every 60 seconds
+        await asyncio.sleep(60)

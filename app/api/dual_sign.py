@@ -22,7 +22,9 @@ from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.core.database import get_db, VaultState as VaultStateModel
+# FIXED
+from app.core.database import get_db
+from app.models.vault import VaultState as VaultStateModel
 from app.services.solana_client import (
     _load_oracle_keypair,
     derive_vault_pda,
