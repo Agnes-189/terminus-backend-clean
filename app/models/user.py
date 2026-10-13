@@ -11,6 +11,14 @@ class UserRole(str, enum.Enum):
     ADMIN = "ADMIN"
 
 
+class OwnerStatus(str, enum.Enum):
+    ACTIVE = "ACTIVE"
+    WARNING = "WARNING"
+    INACTIVE = "INACTIVE"
+    CHALLENGED = "CHALLENGED"
+    SETTLED = "SETTLED"
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -18,6 +26,7 @@ class User(Base):
     email = Column(String, unique=True, index=True, nullable=False)
     password_hash = Column(String, nullable=False)
     role = Column(Enum(UserRole), default=UserRole.OWNER, nullable=False)
+    status = Column(Enum(OwnerStatus), default=OwnerStatus.ACTIVE, nullable=False)
 
     # Multi-Factor Authentication (MFA)
     mfa_enabled = Column(Boolean, default=False)

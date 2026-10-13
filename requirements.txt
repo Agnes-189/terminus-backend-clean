@@ -1,3 +1,4 @@
+alembic
 argon2-cffi==25.1.0
 annotated-types==0.7.0
 anyio==4.13.0
@@ -33,3 +34,9 @@ solana
 opencv-python-headless>=4.8.0
 zxing-cpp>=2.2.0
 pillow>=10.0.0
+prometheus-client
+requests>=2.31.0
+pyotp
+
+celery>=5.3.6
+redis>=5.0.1

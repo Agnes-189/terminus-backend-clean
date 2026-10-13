@@ -55,7 +55,7 @@ class Settings(BaseSettings):
     WALLET_ENCRYPTION_KEY: Optional[str] = Field(None, description="Fernet key for custodial wallet encryption")
 
     # --- 4. Solana RPC & Blockchain Defaults ---
-    SOLANA_RPC_URL: str = Field("https://api.mainnet-beta.solana.com", description="Primary Solana RPC endpoint")
+    SOLANA_RPC_URL: str = Field("https://api.devnet.solana.com", description="Primary Solana RPC endpoint")
     SOLANA_RPC_FALLBACKS: Union[List[str], str] = Field(
         default=["https://solana-api.projectserum.com", "https://rpc.ankr.com/solana"],
         description="Fallback RPC nodes"
