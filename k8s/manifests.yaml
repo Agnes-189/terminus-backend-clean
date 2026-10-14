@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: terminus-backend-config
+  namespace: default
+data:
+  ENVIRONMENT: "production"
+  PORT: "8000"
