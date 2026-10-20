@@ -58,8 +58,8 @@ jobs:
           REDIS_URL: redis://localhost:6379/0
           JWT_SECRET: ci_test_secret_key_minimum_32_characters_long
           SECRET_KEY: ci_test_secret_key_minimum_32_characters_long
-          WALLET_ENCRYPTION_KEY: ci_test_secret_key_minimum_32_characters_long
+          WALLET_ENCRYPTION_KEY: hzk9siJMg9hJ2arrgJWuL62gpKd5KCVoEoaQ8NFlIAQ=
           SOLANA_RPC_URL: https://api.devnet.solana.com
         run: |
-          alembic upgrade head || true
+          alembic upgrade head
           python -m pytest -v --disable-warnings -o asyncio_mode=auto
