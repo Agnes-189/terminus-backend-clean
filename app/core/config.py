@@ -2,7 +2,7 @@ import json
 import logging
 import os
 from typing import List, Optional, Union
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
@@ -53,6 +53,7 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = Field("HS256", description="JWT encryption algorithm")
     ACCESS_TOKEN_EXPIRE_MINUTES: int = Field(60, description="JWT token TTL in minutes")
     WALLET_ENCRYPTION_KEY: Optional[str] = Field(None, description="Fernet key for custodial wallet encryption")
+    ORACLE_KEYPAIR_SECRET: Optional[str] = Field(None, description="Base58 private key for oracle keypair")
 
     # --- 4. Solana RPC & Blockchain Defaults ---
     SOLANA_RPC_URL: str = Field("https://api.devnet.solana.com", description="Primary Solana RPC endpoint")
@@ -91,6 +92,35 @@ class Settings(BaseSettings):
             for key, val in secrets.items():
                 if hasattr(self, key):
                     setattr(self, key, val)
+
+    @model_validator(mode="after")
+    def validate_production_security(self):
+        """
+        Enforces strict secret validation.
+        Prevents application startup if placeholder or insecure secrets are detected
+        when ENVIRONMENT is 'staging', 'prod', or 'production'.
+        """
+        env = self.ENVIRONMENT.lower()
+        if env in ["production", "prod", "staging"]:
+            insecure_keywords = [
+                "change", "placeholder", "default", "secret", "12345", "aggie_dev"
+            ]
+
+            # 1. Validate JWT_SECRET
+            if any(kw in self.JWT_SECRET.lower() for kw in insecure_keywords) or len(self.JWT_SECRET) < 32:
+                raise ValueError(
+                    f"CRITICAL SECURITY ERROR: JWT_SECRET in '{env}' mode must be a secure "
+                    "random string of at least 32 characters and cannot contain default placeholders."
+                )
+
+            # 2. Validate ORACLE_KEYPAIR_SECRET
+            if not self.ORACLE_KEYPAIR_SECRET or any(kw in self.ORACLE_KEYPAIR_SECRET.lower() for kw in insecure_keywords):
+                raise ValueError(
+                    f"CRITICAL SECURITY ERROR: ORACLE_KEYPAIR_SECRET in '{env}' mode "
+                    "must be provided and cannot be a default or placeholder value."
+                )
+
+        return self
 
 
 settings = Settings()
