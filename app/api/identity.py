@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
+from sqlalchemy import or_
 import re
 import base58
 from app.core.database import get_db, User
@@ -35,7 +36,7 @@ def normalize_identifier(identifier: str) -> tuple[str, str]:
     if "@" in identifier:
         return ("email", identifier.lower().strip())
     else:
-        return ("username", identifier.lower().strip())
+        return ("pubkey", identifier.strip())
 
 @router.get("/lookup/{identifier}")
 async def lookup_identity(
@@ -51,16 +52,18 @@ async def lookup_identity(
         if identifier_type == "email":
             user = db.query(User).filter(User.email == normalized_id).first()
         else:
-            user = db.query(User).filter(User.username == normalized_id).first()
+            user = db.query(User).filter(User.pubkey == normalized_id).first()
         
         if not user:
             return IdentityLookupResponse(found=False)
         
+        user_pubkey = getattr(user, 'pubkey', None)
+        
         return IdentityLookupResponse(
             found=True,
-            username=user.username,
-            email=user.email,
-            solana_pubkey=user.solana_pubkey,
+            username=user_pubkey,
+            email=getattr(user, 'email', None),
+            solana_pubkey=getattr(user, 'solana_pubkey', user_pubkey),
             friendly_name=getattr(user, 'full_name', None),
         )
     except Exception as e:
@@ -68,17 +71,21 @@ async def lookup_identity(
 
 @router.post("/register")
 async def register_identity(request: IdentityRegisterRequest, db: Session = Depends(get_db)):
-    # Registration logic as provided in identity.py
-    existing_user = db.query(User).filter(User.username == request.username.lower()).first()
+    existing_user = db.query(User).filter(
+        or_(User.pubkey == request.username, User.email == request.email.lower())
+    ).first()
     if existing_user:
-        raise HTTPException(status_code=409, detail="Username taken")
+        raise HTTPException(status_code=409, detail="User or public key already exists")
     
     new_user = User(
-        username=request.username.lower(),
+        pubkey=request.username,
         email=request.email.lower(),
-        solana_pubkey=request.solana_pubkey,
     )
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
-    return {"success": True, "user_id": new_user.id, "username": new_user.username}
+    return {
+        "success": True, 
+        "user_id": getattr(new_user, 'id', 1), 
+        "username": new_user.pubkey
+    }
