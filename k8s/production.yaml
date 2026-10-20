@@ -1,0 +1,87 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: terminus-api
+  namespace: production
+  labels:
+    app: terminus-api
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: terminus-api
+  template:
+    metadata:
+      labels:
+        app: terminus-api
+    spec:
+      containers:
+        - name: api
+          image: terminus-backend:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+          envFrom:
+            - secretRef:
+                name: terminus-secrets
+            - configMapRef:
+                name: terminus-config
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+          livenessProbe:
+            httpGet:
+              path: /metrics
+              port: 8000
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /api/v1/auth/me
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: terminus-api-service
+  namespace: production
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8000
+      targetPort: 8000
+      protocol: TCP
+  selector:
+    app: terminus-api
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: terminus-ingress
+  namespace: production
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/proxy-body-size: "20m"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - api.terminus.network
+      secretName: terminus-tls-cert
+  rules:
+    - host: api.terminus.network
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: terminus-api-service
+                port:
+                  number: 8000
