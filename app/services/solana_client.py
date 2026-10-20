@@ -10,10 +10,11 @@ from solders.transaction import VersionedTransaction
 from solders.hash import Hash
 from solana.rpc.async_api import AsyncClient
 from solana.rpc.commitment import Finalized, Confirmed
+from app.core.config import settings
 
 logger = logging.getLogger("SolanaClient")
 
-PRIMARY_RPC = os.getenv("SOLANA_RPC_URL", "https://api.devnet.solana.com")
+PRIMARY_RPC = getattr(settings, "SOLANA_RPC_URL", os.getenv("SOLANA_RPC_URL", "https://api.devnet.solana.com"))
 SOLANA_RPC_URL = PRIMARY_RPC
 
 FALLBACK_RPCS = [
@@ -55,13 +56,6 @@ class SolanaClientService:
                     return client
                 await client.close()
             except Exception as e:
-                err_str = str(e)
-                if "AccountNotFound" in err_str or "SendTransactionPreflightFailureMessage" in err_str:
-                    mock_sig = "5DevnetMockTxSignatureForTesting111111111111111111111111111111111111111111111111111"
-                    logger.warning(f"⚠️ Devnet preflight simulation fallback triggered: {mock_sig}")
-                    return {"tx_signature": mock_sig, "status": "devnet_simulated"}
-            if "AccountNotFound" in err_str or "SendTransactionPreflightFailureMessage" in err_str:
-                return {"tx_signature": mock_sig, "vault_pda": str(signers[0].pubkey()), "status": "devnet_simulated"}
                 await client.close()
                 logger.warning(f"⚠️ RPC connection failed for {url}: {str(e)}")
 
@@ -85,6 +79,7 @@ class SolanaClientService:
     ) -> Dict[str, Any]:
         """Builds, signs, broadcasts, and confirms a VersionedTransaction."""
         client = await cls.get_rpc_client()
+        env = getattr(settings, "ENVIRONMENT", os.getenv("ENVIRONMENT", "development")).lower()
 
         try:
             latest_blockhash_resp = await client.get_latest_blockhash(commitment=Finalized)
@@ -132,7 +127,8 @@ class SolanaClientService:
             return {
                 "tx_signature": tx_sig,
                 "status": "FINALIZED",
-                "logs": logs
+                "logs": logs,
+                "is_mock": False
             }
 
         except TransactionFailedError as e:
@@ -140,11 +136,18 @@ class SolanaClientService:
             raise e
         except Exception as e:
             err_str = str(e)
+            logger.error(f"❌ [SOLANA ERROR]: {err_str}")
+            
+            # Strict Gate: Fail immediately in staging/production, forbid mock simulation signatures
+            if env in ["production", "staging"]:
+                raise TransactionFailedError(f"Real-chain transaction execution failed: {err_str}") from e
+
+            # Dev-only fallback
             if "AccountNotFound" in err_str or "SendTransactionPreflightFailureMessage" in err_str:
                 mock_sig = "5DevnetMockTxSignatureForTesting111111111111111111111111111111111111111111111111111"
-                logger.warning(f"⚠️ Devnet preflight simulation fallback triggered: {mock_sig}")
-                return {"tx_signature": mock_sig, "status": "devnet_simulated"}
-            logger.error(f"❌ [SOLANA TX FAILED]: {str(e)}")
+                logger.warning(f"⚠️ Devnet preflight simulation fallback triggered in dev mode: {mock_sig}")
+                return {"tx_signature": mock_sig, "status": "devnet_simulated", "is_mock": True}
+            
             raise TransactionFailedError(str(e)) from e
         finally:
             await client.close()
