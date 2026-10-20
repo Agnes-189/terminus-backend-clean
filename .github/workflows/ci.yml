@@ -52,10 +52,11 @@ jobs:
 
       - name: Run Pytest Test Suite
         env:
+          PYTHONPATH: .
           ENVIRONMENT: testing
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/terminus_test
           REDIS_URL: redis://localhost:6379/0
           JWT_SECRET: ci_test_secret_key_minimum_32_characters_long
           SECRET_KEY: ci_test_secret_key_minimum_32_characters_long
         run: |
-          pytest -v --disable-warnings
+          python -m pytest -v --disable-warnings
